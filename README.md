@@ -6,7 +6,7 @@ You still get normal chat on the bottom; the dark strip and matrix above are the
 
 ## Getting started
 
-Copy `.env.example` to `.env.local`, add your [OpenRouter](https://openrouter.ai/) API key, then:
+Paste your own [OpenRouter](https://openrouter.ai/keys) API key into the field at the top of the page — it's stored only in your browser's `localStorage` and sent directly to OpenRouter with each request. Nothing server-side ever sees it (BYOK: bring your own key).
 
 ```bash
 npm install
@@ -17,4 +17,4 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Stack
 
-Next.js (App Router), TypeScript, CSS. Completion and optional logprob data are requested server-side via `/api/complete`.
+Next.js (App Router), TypeScript, CSS. Static export (`output: "export"`) — no server, no API route, no secrets. The browser calls OpenRouter's `/chat/completions` endpoint directly with the visitor's own key and streams the response client-side.

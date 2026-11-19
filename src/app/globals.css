@@ -303,12 +303,7 @@ body {
   min-width: 0;
 }
 
-.ascii-col--side > .ascii-panel.ascii-panel--grow:first-of-type {
-  flex: 0 0 auto;
-  min-height: 0;
-}
-
-.ascii-col--side > .ascii-panel.ascii-panel--grow:last-of-type {
+.ascii-col--side > .ascii-panel.ascii-panel--grow {
   flex: 1;
   min-height: 0;
 }
@@ -367,14 +362,6 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-}
-
-.ascii-panel-body--events {
-  max-height: 96px;
-  overflow-y: auto;
-  flex: 0 0 auto;
-  min-height: 0;
-  padding: 6px 10px 8px;
 }
 
 .ascii-panel-body--analysis {
@@ -530,6 +517,28 @@ body {
   font-size: 10px;
   opacity: 0.85;
   color: var(--crt-label);
+}
+
+.ascii-key-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 11px;
+  border: 1px solid var(--crt-border);
+  background: var(--crt-input);
+  color: var(--crt-fg);
+  width: 100%;
+  max-width: 220px;
+  border-radius: 0;
+}
+
+.ascii-key-input::placeholder {
+  color: var(--crt-muted);
+  opacity: 0.8;
+}
+
+.ascii-key-input:focus {
+  outline: 1px solid var(--crt-phosphor);
+  outline-offset: 1px;
 }
 
 .ascii-select {
@@ -718,32 +727,6 @@ body {
 
 .ascii-msg-text--live {
   opacity: 0.95;
-}
-
-.ascii-event-list {
-  list-style: none;
-}
-
-.ascii-event-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 2px 0;
-  border-bottom: 1px dotted rgba(255, 255, 255, 0.12);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.ascii-event-ts {
-  opacity: 0.78;
-  flex-shrink: 0;
-  color: var(--crt-muted);
-}
-
-.ascii-event-kind {
-  text-align: right;
-  word-break: break-word;
-  color: var(--crt-fg);
 }
 
 .ascii-analysis-stream {

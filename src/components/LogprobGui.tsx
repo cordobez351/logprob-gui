@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage, TokenLogprobStep, TraceEvent } from "@/lib/types";
+import type { ChatMessage, TokenLogprobStep } from "@/lib/types";
 import {
   entropyFromStep,
   logprobToLinear,
@@ -35,8 +35,9 @@ const TRACE_GLITCH_MIN_ENT = 0.01;
 const MORPH_MAX_COLS = 32;
 /** One full morph cycle through candidate pairs (ms). */
 const MORPH_CYCLE_MS = 5_200;
-/** Re-render interval for phase clock (lower = smoother, more CPU). */
-const MORPH_TICK_MS = 36;
+/** Golden-ratio conjugate: low-discrepancy spacing so per-token phase
+ *  offsets never cluster or repeat a visible pattern. */
+const PHASE_GOLDEN = 0.6180339887498949;
 
 function morphSlotLen(chosen: string, cands: readonly string[]): number {
   let m = chosen.length;
@@ -57,18 +58,27 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Faint perpetual shimmer so settled/matching glyphs never read as
+ *  fully static — always a hair of motion, even at rest. */
+function idleShimmer(phase: number, i: number): number {
+  return 0.94 + 0.06 * Math.sin(2 * Math.PI * (phase * 2.7 + i * 0.53));
+}
+
 function TraceMorphTokenCols({
   cands,
   morphPhase,
+  phaseOffset,
   slotLen,
 }: {
   cands: readonly string[];
   morphPhase: number;
+  phaseOffset: number;
   slotLen: number;
 }) {
   const L = slotLen;
   const n = cands.length;
-  const cont = Math.min(n - 1e-9, morphPhase * n);
+  const phase = (morphPhase + phaseOffset) % 1;
+  const cont = Math.min(n - 1e-9, phase * n);
   const k = Math.floor(cont) % n;
   const lp = cont - Math.floor(cont);
   const from = padMorph(cands[k] ?? "", L);
@@ -92,7 +102,12 @@ function TraceMorphTokenCols({
           return (
             <span key={i} className="token-span__col token-span__col--morph">
               <span className="token-span__glyph token-span__glyph--morph">
-                <span className="token-span__ghost token-span__ghost--solo">{fromC}</span>
+                <span
+                  className="token-span__ghost token-span__ghost--solo"
+                  style={{ opacity: idleShimmer(phase, i) }}
+                >
+                  {fromC}
+                </span>
               </span>
             </span>
           );
@@ -104,13 +119,15 @@ function TraceMorphTokenCols({
         const glitchOp =
           showGlitch ? Math.max(0, Math.sin(Math.PI * ((blend - 0.28) / 0.44))) * 0.88 : 0;
 
+        const shimmer = idleShimmer(phase, i);
+
         return (
           <span key={i} className="token-span__col token-span__col--morph">
             <span className="token-span__glyph token-span__glyph--morph">
               <span
                 className="token-span__ghost"
                 style={{
-                  opacity: (1 - blend) * (0.45 + 0.55 * (1 - rise)),
+                  opacity: (1 - blend) * (0.45 + 0.55 * (1 - rise)) * shimmer,
                   transform: `scaleY(${0.28 + 0.72 * (1 - blend)})`,
                 }}
                 aria-hidden
@@ -129,7 +146,10 @@ function TraceMorphTokenCols({
               <span
                 className="token-span__ghost token-span__ghost--front"
                 style={{
-                  opacity: blend * (0.35 + 0.65 * rise),
+                  // Rises to full opacity as blend -> 1 (rather than
+                  // stalling at ~0.35), so the glyph never "pops" once
+                  // it settles into the resting/next-pair state.
+                  opacity: Math.min(1, blend + rise * 0.35) * shimmer,
                   transform: `scaleY(${0.22 + 0.78 * blend})`,
                 }}
                 aria-hidden
@@ -159,35 +179,50 @@ const LIGHT_ZONE_BANNER = "═══ MODEL · TEMP · MESSAGE ═══";
 const ZONE_SPLIT_LINE = "░".repeat(BOX_TW);
 
 const POPULAR_MODELS: readonly string[] = [
-  "openai/gpt-oss-120b",
-  "google/gemma-4-26b-a4b-it",
-  "mistralai/mistral-nemo",
-  "qwen/qwen3.5-flash-02-23",
-  "qwen/qwen3-235b-a22b-2507",
-  "openai/gpt-oss-120b:free",
-  "google/gemini-2.0-flash-001",
-  "minimax/minimax-m2.5:free",
-  "z-ai/glm-4.5-air:free",
-  "openai/gpt-oss-20b",
-  "nvidia/nemotron-3-nano-30b-a3b:free",
-  "meta-llama/llama-3.1-8b-instruct",
-  "qwen/qwen3.5-9b",
-  "google/gemini-2.5-flash-lite-preview-09-2025",
-  "openai/gpt-5-nano",
-  "google/gemini-2.0-flash-lite-001",
-  "mistralai/mistral-small-3.2-24b-instruct",
-  "z-ai/glm-4.7-flash",
-  "qwen/qwen3-next-80b-a3b-instruct",
-  "meta-llama/llama-3.3-70b-instruct",
+  "inclusionai/ling-2.6-flash",
+  "ibm-granite/granite-4.0-h-micro",
+  "ibm-granite/granite-4.1-8b",
+  "nex-agi/nex-n2-mini",
+  "thedrummer/unslopnemo-12b",
+  "thedrummer/rocinante-12b",
+  "thedrummer/cydonia-24b-v4.1",
+  "meta-llama/llama-3.2-3b-instruct",
+  "gryphe/mythomax-l2-13b",
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v3.2",
+  "rekaai/reka-edge",
+  "qwen/qwen3-vl-32b-instruct",
+  "qwen/qwen3-vl-8b-instruct",
+  "qwen/qwen3-30b-a3b-instruct-2507",
+  "bytedance/ui-tars-1.5-7b",
   "openai/gpt-4.1-nano",
-  "openai/gpt-oss-20b:free",
-  "qwen/qwen3-32b",
   "google/gemma-3-27b-it",
-  "nvidia/nemotron-3-nano-30b-a3b",
-  "google/gemma-3-12b-it",
-  "google/gemma-4-31b-it:free",
-  "poolside/laguna-m.1:free",
 ];
+
+/** Default model shown on first load; user can swap it right away. */
+const DEFAULT_MODEL = "openai/gpt-4o-mini";
+
+/** BYOK: each visitor's OpenRouter key stays in their own browser only. */
+const API_KEY_STORAGE_KEY = "logprob-gui-openrouter-key";
+
+function loadStoredApiKey(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(API_KEY_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function storeApiKey(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    if (key) localStorage.setItem(API_KEY_STORAGE_KEY, key);
+    else localStorage.removeItem(API_KEY_STORAGE_KEY);
+  } catch {
+    /* ignore (private browsing, quota, etc.) */
+  }
+}
 
 const STRIP_IN = 76;
 
@@ -200,15 +235,6 @@ function stripBorder(ch: string, width: number): string {
   return "+" + ch.repeat(width) + "+";
 }
 
-function newTrace(kind: TraceEvent["kind"], detail?: string): TraceEvent {
-  return {
-    id: crypto.randomUUID(),
-    ts: Date.now(),
-    kind,
-    detail,
-  };
-}
-
 function sparkPct(value: number, cap: number): number {
   return Math.min(100, Math.round((100 * value) / cap));
 }
@@ -219,8 +245,10 @@ export function LogprobGui() {
   const [live, setLive] = useState<{ text: string; steps: TokenLogprobStep[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [agitated, setAgitated] = useState(false);
-  const [traces, setTraces] = useState<TraceEvent[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
+  /** Auto-walk the token strip like it's being clicked through, first to
+   *  last, looping. Clicking a token by hand takes over from there. */
+  const [autoWalk, setAutoWalk] = useState(true);
   const [model, setModel] = useState("");
   const [temperature, setTemperature] = useState(0.7);
   const [hyperMode, setHyperMode] = useState(false);
@@ -234,6 +262,16 @@ export function LogprobGui() {
     model: string;
   } | null>(null);
   const [morphPhase, setMorphPhase] = useState(0);
+  const [apiKey, setApiKey] = useState("");
+
+  useEffect(() => {
+    setApiKey(loadStoredApiKey());
+  }, []);
+
+  const handleApiKeyChange = useCallback((value: string) => {
+    setApiKey(value);
+    storeApiKey(value.trim());
+  }, []);
 
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -244,10 +282,7 @@ export function LogprobGui() {
     steps: [],
   });
 
-  const defaultModel = useMemo(
-    () => process.env.NEXT_PUBLIC_OPENROUTER_MODEL ?? "openai/gpt-4o-mini",
-    [],
-  );
+  const defaultModel = DEFAULT_MODEL;
 
   const effectiveTemperature = hyperMode ? 2 : Math.min(temperature, TEMP_SLIDER_MAX);
   const modelOptions = useMemo(() => {
@@ -280,13 +315,6 @@ export function LogprobGui() {
     return () => clearInterval(id);
   }, []);
 
-  const pushTrace = useCallback((e: TraceEvent) => {
-    setTraces((t) => {
-      const next = [e, ...t];
-      return next.slice(0, 40);
-    });
-  }, []);
-
   const stepsForViz = useMemo(
     () => live?.steps ?? lastCompletion?.steps ?? [],
     [live?.steps, lastCompletion?.steps],
@@ -305,11 +333,22 @@ export function LogprobGui() {
   }, [stepsForViz.length]);
 
   useEffect(() => {
-    if (stepsForViz.length === 0) return;
+    if (!autoWalk || stepsForViz.length === 0) return;
     const id = setInterval(() => {
-      setMorphPhase((Date.now() % MORPH_CYCLE_MS) / MORPH_CYCLE_MS);
-    }, MORPH_TICK_MS);
+      setSelectedIdx((i) => (i + 1) % stepsForViz.length);
+    }, 2_000);
     return () => clearInterval(id);
+  }, [autoWalk, stepsForViz.length]);
+
+  useEffect(() => {
+    if (stepsForViz.length === 0) return;
+    let raf = 0;
+    const step = () => {
+      setMorphPhase((Date.now() % MORPH_CYCLE_MS) / MORPH_CYCLE_MS);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
   }, [stepsForViz.length]);
 
   const meanPct = meanTop1Percent(stepsForViz);
@@ -321,13 +360,22 @@ export function LogprobGui() {
   const sensorOpacities = useMemo(() => {
     const out: number[] = [];
     const steps = stepsForViz;
+    const n = steps.length;
     for (let i = 0; i < GRID_TOTAL; i++) {
-      const idx = steps.length - GRID_TOTAL + i;
-      if (idx < 0 || !steps[idx]) {
+      if (n === 0) {
         out.push(0.1);
         continue;
       }
-      const h = entropyFromStep(steps[idx]!);
+      // Once the reply has enough tokens, show the latest GRID_TOTAL
+      // window; a shorter reply tiles/repeats its own spread to fill
+      // the map rather than leaving most of it dim.
+      const idx = n >= GRID_TOTAL ? n - GRID_TOTAL + i : i % n;
+      const step = steps[idx];
+      if (!step) {
+        out.push(0.1);
+        continue;
+      }
+      const h = entropyFromStep(step);
       const o = 0.12 + Math.min(0.88, (h / 2.8) * 0.88);
       out.push(o);
     }
@@ -493,7 +541,7 @@ export function LogprobGui() {
     const proto =
       (model || defaultModel) + ` · TOP_${TOP_LOGPROBS}` + (hyperMode ? " · HYPER" : "");
     return [
-      asciiCapTop("OPENROUTER LINK"),
+      asciiCapTop("API LINK"),
       asciiRow(`LOGPROB GUI · ${proto}`),
       asciiRow(`LOCAL · ${clock}`),
       asciiCapBot(),
@@ -507,12 +555,16 @@ export function LogprobGui() {
   const send = async () => {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
+    if (!apiKey.trim()) {
+      setErrorBanner("Paste an API key above first.");
+      return;
+    }
     const prevMessages = messagesRef.current;
     setInput("");
     setErrorBanner(null);
     setLatencyMs(null);
+    setAutoWalk(true);
 
-    const hadAssistant = prevMessages.some((m) => m.role === "assistant");
     const nextMessages: ChatMessage[] = [...prevMessages, { role: "user", content: trimmed }];
     setMessages(nextMessages);
     setLive(null);
@@ -521,14 +573,11 @@ export function LogprobGui() {
     setAgitated(true);
     const ac = new AbortController();
     completionAbortRef.current = ac;
-    pushTrace(newTrace("REQ_START"));
-    if (hadAssistant) pushTrace(newTrace("REGEN"));
 
     const t0 = performance.now();
     let sawSignal = false;
 
     const applyUserStop = (p: { text: string; steps: TokenLogprobStep[] }) => {
-      pushTrace(newTrace("ABORT", "stream cancelled"));
       setLive(null);
       const latencyRound = Math.round(performance.now() - t0);
       setLatencyMs(latencyRound);
@@ -543,37 +592,44 @@ export function LogprobGui() {
           ...nextMessages,
           { role: "assistant", content: p.text.trim() ? p.text : "(stopped)" },
         ]);
-        if (p.steps.length > 0) {
-          pushTrace(newTrace("TOK_BATCH", `${p.steps.length} tokens (partial)`));
-        }
       } else {
         setMessages(nextMessages);
       }
       streamPartialRef.current = { text: "", steps: [] };
-      pushTrace(newTrace("STREAM_DONE"));
     };
 
     try {
-      const res = await fetch("/api/complete", {
+      // BYOK: talk to OpenRouter directly from the browser with the
+      // visitor's own key. Nothing server-side ever sees it.
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey.trim()}`,
+          "HTTP-Referer": window.location.origin,
+          "X-Title": "logprob-gui",
+        },
         signal: ac.signal,
         body: JSON.stringify({
           messages: nextMessages,
-          model: model || undefined,
+          model: model || defaultModel,
           stream: true,
           temperature: effectiveTemperature,
+          logprobs: true,
           top_logprobs: TOP_LOGPROBS,
         }),
       });
 
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        const err = j as { error?: string; detail?: string; retryAfter?: string };
-        const msg = [err.error, err.detail, err.retryAfter ? `retry after ${err.retryAfter}s` : ""]
-          .filter(Boolean)
-          .join(" · ");
-        throw new Error(msg || res.statusText);
+        const err = j as { error?: string | { message?: string }; message?: string };
+        const msg =
+          (typeof err.error === "string" ? err.error : err.error?.message) ?? err.message;
+        const retryAfter = res.headers.get("retry-after");
+        throw new Error(
+          [msg, retryAfter ? `retry after ${retryAfter}s` : ""].filter(Boolean).join(" · ") ||
+            res.statusText,
+        );
       }
       if (!res.body) throw new Error("No response body");
 
@@ -590,7 +646,6 @@ export function LogprobGui() {
           ) {
             sawSignal = true;
             setAgitated(false);
-            pushTrace(newTrace("FIRST_CHUNK"));
           }
           setLive({ text: partial.text, steps: partial.steps });
         },
@@ -612,13 +667,6 @@ export function LogprobGui() {
       });
       setMessages([...nextMessages, { role: "assistant", content: acc.text }]);
       setLive(null);
-
-      if (acc.steps.length === 0) {
-        pushTrace(newTrace("NO_STEP_DETAIL", "stream had no per-step breakdown"));
-      } else {
-        pushTrace(newTrace("TOK_BATCH", `${acc.steps.length} tokens`));
-      }
-      pushTrace(newTrace("STREAM_DONE"));
     } catch (e) {
       const aborted =
         (typeof DOMException !== "undefined" &&
@@ -630,7 +678,6 @@ export function LogprobGui() {
       } else {
         const msg = e instanceof Error ? e.message : String(e);
         setErrorBanner(msg);
-        pushTrace(newTrace("ERR", msg));
         setMessages(prevMessages);
       }
     } finally {
@@ -688,6 +735,18 @@ export function LogprobGui() {
             {LIGHT_ZONE_BANNER}
           </pre>
           <div className="ascii-banner-param-cluster">
+            <label className="ascii-field" title="Stored only in your browser; sent straight to OpenRouter, never to this server.">
+              <span className="sr-only">OpenRouter API key</span>
+              <input
+                className="ascii-key-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="sk-or-... (your OpenRouter key)"
+                value={apiKey}
+                onChange={(e) => handleApiKeyChange(e.target.value)}
+              />
+            </label>
             <label className="ascii-field">
               <span className="sr-only">Model</span>
               <span className="ascii-select-wrap">
@@ -789,7 +848,10 @@ export function LogprobGui() {
                                 .map((t) => JSON.stringify(t))
                                 .join(" ")
                             }
-                            onClick={() => setSelectedIdx(i)}
+                            onClick={() => {
+                              setSelectedIdx(i);
+                              setAutoWalk(false);
+                            }}
                           >
                             {morphActive ? (
                               <>
@@ -797,6 +859,7 @@ export function LogprobGui() {
                                 <TraceMorphTokenCols
                                   cands={cands}
                                   morphPhase={morphPhase}
+                                  phaseOffset={(i * PHASE_GOLDEN) % 1}
                                   slotLen={slotLen}
                                 />
                               </>
@@ -874,30 +937,6 @@ export function LogprobGui() {
           </div>
 
           <div className="ascii-col ascii-col--side">
-            <div className="ascii-panel ascii-panel--grow">
-              <pre className="ascii-pre ascii-pre--cap" aria-hidden>
-                {[asciiCapTop("EVENT LOG"), asciiCapMid()].join("\n")}
-              </pre>
-              <div className="ascii-panel-body ascii-panel-body--events">
-                <ul className="ascii-event-list">
-                  {traces.map((t) => (
-                    <li key={t.id} className="ascii-event-row">
-                      <span className="ascii-event-ts">
-                        {new Date(t.ts).toISOString().slice(11, 23)}
-                      </span>
-                      <span className="ascii-event-kind">
-                        {t.kind}
-                        {t.detail ? ` · ${t.detail}` : ""}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <pre className="ascii-pre ascii-pre--cap ascii-pre--cap-tail" aria-hidden>
-                {asciiCapBot()}
-              </pre>
-            </div>
-
             <div className="ascii-panel ascii-panel--grow">
               <pre className="ascii-pre ascii-pre--cap" aria-hidden>
                 {!messages.length && !live
